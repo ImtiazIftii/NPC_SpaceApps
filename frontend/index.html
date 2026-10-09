@@ -15,14 +15,4 @@
   <script type="module" src="/src/main.tsx"></script>
 </body>
 
-</html>1. You download the whole world CSV every time (the main cost)
-/api/area/csv/.../world/1/{date} returns the entire day, often 100k–300k+ rows (tens of MB for VIIRS). Everything else is secondary to that transfer. Options:
-
-Proxy through your backend (best fix). You already have a FastAPI backend (API_BASE). Add an endpoint like /api/world-fires?date=...&limit=10000 that:
-fetches FIRMS server-side (datacenter bandwidth is far faster than the user’s),
-keeps only the top N by FRP and the 3 columns you need,
-caches the result on disk or in memory per source:date (past dates never change),
-returns gzip’d compact JSON (~200 KB instead of tens of MB).
-Each date is then slow once for the first visitor and instant for everyone after. This also removes your FIRMS key from the browser bundle (it’s currently hardcoded as a fallback, so you should rotate it regardless).
-Prefetch neighbours. While the user views day N, quietly fetch N+1 (and N-1) into worldCacheRef. This makes scrubbing and “Play” feel instant after the first load.
-Use the larger “world” request less. If the user is zoomed into a region, use the area endpoint with the viewport bbox instead of the full world. You already do this for the AOI mode.
+</html>

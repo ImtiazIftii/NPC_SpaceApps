@@ -176,7 +176,7 @@ export default function IntelligencePanel({
               {searchOpen && (
                 <div className="country-search-dropdown strata-chrome">
                   <div className="search-input-wrapper">
-                    <span className="search-icon">🔍</span>
+                    <span className="search-icon"></span>
                     <input
                       aria-label="Search countries"
                       className="country-search-input"
@@ -217,7 +217,7 @@ export default function IntelligencePanel({
                       }}
                       role="option"
                     >
-                      <span className="option-name">🌍 Worldwide Overview</span>
+                      <span className="option-name">Worldwide Overview</span>
                       <span className="option-code">WLD</span>
                     </li>
                     {filteredCountries.map((item) => (

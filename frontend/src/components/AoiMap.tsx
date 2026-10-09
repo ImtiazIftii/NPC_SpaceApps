@@ -1205,13 +1205,7 @@ export default function AoiMap({
             Fit World
           </button>
         )}
-        <button
-          data-active={showAll}
-          onClick={() => setShowAll((v) => !v)}
-          type="button"
-        >
-          {showAll ? "Hide country anomalies" : "Country anomalies"}
-        </button>
+       
         <button
           data-active={worldFires}
           onClick={() => setWorldFires((v) => !v)}
