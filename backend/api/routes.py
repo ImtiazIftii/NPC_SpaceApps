@@ -116,8 +116,12 @@ def get_trust(country: str = Query(..., description="ISO3 country code (e.g. ARG
 # 4. Fire Climatology, Calendar & Anomaly Analysis
 # -------------------------------------------------------------------------
 
+import asyncio
+
+ANALYSIS_SEMAPHORE = asyncio.Semaphore(2)
+
 @router.get("/analysis", response_model=AnalysisResponse, tags=["Analysis"])
-def get_analysis(
+async def get_analysis(
     country: str = Query(..., description="ISO3 country code (e.g. ARG)"),
     bbox: Optional[str] = Query(None, description="minLon,minLat,maxLon,maxLat"),
     year_from: int = Query(2003, description="Start year"),
@@ -126,13 +130,16 @@ def get_analysis(
     """
     Computes fire activity calendar, heatmap matrix, baseline, z-score anomalies,
     season starts/peaks/ends, and critical periods for the given country or bounding box.
+    Limits concurrency to 2 simultaneous runs to prevent memory exhaustion.
     """
-    return compute_fire_analysis(
-        country=country,
-        bbox=bbox,
-        year_from=year_from,
-        year_to=year_to,
-    )
+    async with ANALYSIS_SEMAPHORE:
+        return await asyncio.to_thread(
+            compute_fire_analysis,
+            country=country,
+            bbox=bbox,
+            year_from=year_from,
+            year_to=year_to,
+        )
 
 
 # -------------------------------------------------------------------------

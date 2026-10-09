@@ -71,13 +71,13 @@ export default function App() {
             // keep fallback
           }
         })
-    }, 150) // 150ms debounce for smooth dragging
+    }, 400) // 400ms debounce after map stops moving
 
     return () => {
       clearTimeout(timer)
       controller.abort()
     }
-  }, [country?.code, bounds, day])
+  }, [country?.code, bounds])
 
   // Enhanced country profile with live measured k and r
   const activeCountry = useMemo(() => {

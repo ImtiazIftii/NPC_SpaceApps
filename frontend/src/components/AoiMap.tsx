@@ -907,59 +907,62 @@ export default function AoiMap({
     let failed = 0
     let lastError = ""
     setAllStatus(`Loading anomalies ${done}/${total}…`)
-    missing.forEach(async (c) => {
-      try {
-        const iso = /^[A-Za-z]{3}$/.test(String(c.code)) ? String(c.code) : String(c.id)
-        const b = c.presets[0].bounds
-        const qs = new URLSearchParams({
-          country: iso.toUpperCase(),
-          bbox: `${b.west},${b.south},${b.east},${b.north}`,
-          year_from: String(c.firstYear ?? 2003),
-          year_to: String(c.lastYear ?? 2026),
-        })
-        const res = await fetch(`${API_BASE}/api/analysis?${qs}`, { signal: ctrl.signal })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const text = await res.text()
-        let data: any
+    ;(async () => {
+      for (const c of missing) {
+        if (ctrl.signal.aborted) break
         try {
-          data = JSON.parse(text)
-        } catch {
-          throw new Error("API did not return JSON (set VITE_API_BASE?)")
-        }
-        const byDate = readDaily(data)
-        if (!Object.keys(byDate).length) {
-          failed += 1
-          lastError = "no z-scores found in response"
-          console.warn(
-            "AoiMap: could not read daily z-scores for",
-            iso,
-            "keys:",
-            Object.keys(data ?? {}),
-            "daily sample:",
-            Array.isArray(data?.daily) ? data.daily[0] : data?.daily,
-          )
-        } else {
-          setAllDaily((prev) => ({ ...prev, [c.id]: byDate }))
-        }
-      } catch (err) {
-        if (!ctrl.signal.aborted) {
-          failed += 1
-          lastError = String((err as Error)?.message ?? err)
-          console.warn("AoiMap: anomaly request failed for", c.id, err)
-        }
-      } finally {
-        done += 1
-        if (!ctrl.signal.aborted) {
-          setAllStatus(
-            done < total
-              ? `Loading anomalies ${done}/${total}…`
-              : failed
-                ? `${failed} failed: ${lastError}`
-                : "",
-          )
+          const iso = /^[A-Za-z]{3}$/.test(String(c.code)) ? String(c.code) : String(c.id)
+          const b = c.presets[0].bounds
+          const qs = new URLSearchParams({
+            country: iso.toUpperCase(),
+            bbox: `${b.west.toFixed(1)},${b.south.toFixed(1)},${b.east.toFixed(1)},${b.north.toFixed(1)}`,
+            year_from: String(c.firstYear ?? 2003),
+            year_to: String(c.lastYear ?? 2026),
+          })
+          const res = await fetch(`${API_BASE}/api/analysis?${qs}`, { signal: ctrl.signal })
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          const text = await res.text()
+          let data: any
+          try {
+            data = JSON.parse(text)
+          } catch {
+            throw new Error("API did not return JSON (set VITE_API_BASE?)")
+          }
+          const byDate = readDaily(data)
+          if (!Object.keys(byDate).length) {
+            failed += 1
+            lastError = "no z-scores found in response"
+            console.warn(
+              "AoiMap: could not read daily z-scores for",
+              iso,
+              "keys:",
+              Object.keys(data ?? {}),
+              "daily sample:",
+              Array.isArray(data?.daily) ? data.daily[0] : data?.daily,
+            )
+          } else {
+            setAllDaily((prev) => ({ ...prev, [c.id]: byDate }))
+          }
+        } catch (err) {
+          if (!ctrl.signal.aborted) {
+            failed += 1
+            lastError = String((err as Error)?.message ?? err)
+            console.warn("AoiMap: anomaly request failed for", c.id, err)
+          }
+        } finally {
+          done += 1
+          if (!ctrl.signal.aborted) {
+            setAllStatus(
+              done < total
+                ? `Loading anomalies ${done}/${total}…`
+                : failed
+                  ? `${failed} failed: ${lastError}`
+                  : "",
+            )
+          }
         }
       }
-    })
+    })()
     return () => ctrl.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAll])

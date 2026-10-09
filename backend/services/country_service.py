@@ -22,11 +22,11 @@ def get_country_dir(iso: str) -> Optional[Path]:
 
 
 def parse_bbox(bbox_str: Optional[str]) -> Optional[Tuple[float, float, float, float]]:
-    """Parse 'minLon,minLat,maxLon,maxLat' string into float tuple."""
+    """Parse 'minLon,minLat,maxLon,maxLat' string into float tuple, rounded to 1 decimal place."""
     if not bbox_str:
         return None
     try:
-        parts = [float(x.strip()) for x in bbox_str.split(",")]
+        parts = [round(float(x.strip()), 1) for x in bbox_str.split(",")]
         if len(parts) != 4:
             return None
         min_lon, min_lat, max_lon, max_lat = parts

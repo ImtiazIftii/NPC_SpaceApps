@@ -19,6 +19,79 @@ from backend.models.schemas import (
     SeasonTrend,
     CriticalPeriod,
 )
+from functools import lru_cache
+from pathlib import Path
+import os
+import gc
+
+# In-memory cache for full-country daily timeseries (~33 KB per country)
+_COUNTRY_DAILY_CACHE: dict[str, pd.Series] = {}
+
+
+def _get_country_daily_series(
+    iso: str, cdir: Optional[Path], full_idx: pd.DatetimeIndex
+) -> Optional[pd.Series]:
+    """Retrieve precomputed country daily series from memory cache or compact parquet file."""
+    if iso in _COUNTRY_DAILY_CACHE:
+        s = _COUNTRY_DAILY_CACHE[iso]
+        return s.reindex(full_idx, fill_value=0.0)
+
+    if not cdir:
+        return None
+
+    daily_pq = cdir / "daily_series.parquet"
+    if daily_pq.exists():
+        try:
+            tbl = pq.read_table(daily_pq, columns=["date", "value"])
+            df = tbl.to_pandas()
+            df["date"] = pd.to_datetime(df["date"])
+            s = pd.Series(df["value"].values.astype(np.float32), index=df["date"])
+            _COUNTRY_DAILY_CACHE[iso] = s
+            del tbl, df
+            return s.reindex(full_idx, fill_value=0.0)
+        except Exception:
+            pass
+
+    # If daily_series.parquet not yet present, compute from grid.parquet, save compact file, and cache
+    grid_pq = cdir / "grid.parquet"
+    if grid_pq.exists():
+        try:
+            tbl = pq.read_table(grid_pq, columns=["date", "value"])
+            df = tbl.to_pandas()
+            df["value"] = df["value"].astype(np.float32)
+            df["date"] = pd.to_datetime(df["date"])
+            daily_grouped = df.groupby("date")["value"].sum().astype(np.float32)
+            try:
+                daily_grouped.reset_index().to_parquet(daily_pq, index=False)
+            except Exception:
+                pass
+            del tbl, df
+            gc.collect()
+            _COUNTRY_DAILY_CACHE[iso] = daily_grouped
+            return daily_grouped.reindex(full_idx, fill_value=0.0)
+        except Exception:
+            return None
+
+    return None
+
+
+def _is_full_country_box(
+    parsed_box: Optional[Tuple[float, float, float, float]],
+    meta_bbox: List[float],
+) -> bool:
+    """Check if parsed bbox matches or encompasses the full country bounds."""
+    if not parsed_box:
+        return True
+    if len(meta_bbox) != 4:
+        return False
+    b_min_lon, b_min_lat, b_max_lon, b_max_lat = parsed_box
+    m_min_lon, m_min_lat, m_max_lon, m_max_lat = meta_bbox
+    return (
+        b_min_lon <= m_min_lon + 0.2
+        and b_min_lat <= m_min_lat + 0.2
+        and b_max_lon >= m_max_lon - 0.2
+        and b_max_lat >= m_max_lat - 0.2
+    )
 
 
 def compute_fire_analysis(
@@ -28,20 +101,61 @@ def compute_fire_analysis(
     year_to: int = 2025,
 ) -> AnalysisResponse:
     """
-    Computes fire activity calendar, heatmap matrix, baseline, z-score anomalies,
-    season starts/peaks/ends, and critical periods for the given country or bounding box.
+    Public entrypoint for fire analysis. Canonicalizes inputs and leverages LRU cache.
     """
     iso = country.upper().strip()
+    canon_bbox: Optional[str] = None
+
+    if bbox:
+        parsed = parse_bbox(bbox)
+        if parsed:
+            try:
+                meta = get_country_metadata(iso)
+                if _is_full_country_box(parsed, meta.get("bbox", [])):
+                    canon_bbox = None
+                else:
+                    canon_bbox = f"{parsed[0]:.1f},{parsed[1]:.1f},{parsed[2]:.1f},{parsed[3]:.1f}"
+            except Exception:
+                canon_bbox = f"{parsed[0]:.1f},{parsed[1]:.1f},{parsed[2]:.1f},{parsed[3]:.1f}"
+
+    return _compute_fire_analysis_cached(iso, canon_bbox, year_from, year_to)
+
+
+@lru_cache(maxsize=128)
+def _compute_fire_analysis_cached(
+    iso: str,
+    bbox: Optional[str] = None,
+    year_from: int = 2003,
+    year_to: int = 2025,
+) -> AnalysisResponse:
+    """
+    Cached computation of fire activity calendar, baseline, and anomalies.
+    """
+    # Step 6: Log RSS memory in MB
+    try:
+        import psutil
+        rss_mb = psutil.Process(os.getpid()).memory_info().rss / 1e6
+        print(f"RSS MB: {rss_mb:.1f} | country: {iso} | bbox: {bbox}")
+    except Exception:
+        pass
+
     cdir = get_country_dir(iso)
     parquet_path = (cdir / "grid.parquet") if cdir else None
     meta = get_country_metadata(iso)
 
-    parsed_box = parse_bbox(bbox)
+    parsed_box = parse_bbox(bbox) if bbox else None
     effective_box = list(parsed_box) if parsed_box else meta["bbox"]
 
-    # Load Parquet data with pyarrow push-down filter if bbox is provided
-    filters = None
-    if parsed_box:
+    start_dt = pd.Timestamp(f"{year_from}-01-01")
+    end_dt = pd.Timestamp(f"{year_to}-12-31")
+    full_idx = pd.date_range(start_dt, end_dt, freq="D")
+    daily_series: Optional[pd.Series] = None
+
+    # Fix 4 & 5: If full country query, use compact precomputed daily series
+    if parsed_box is None:
+        daily_series = _get_country_daily_series(iso, cdir, full_idx)
+    elif cdir and parquet_path and parquet_path.exists():
+        # Load Parquet data with pyarrow push-down filter for sub-bounding box
         b_min_lon, b_min_lat, b_max_lon, b_max_lat = parsed_box
         min_lat_idx = int(np.floor(b_min_lat / STEP))
         max_lat_idx = int(np.floor(b_max_lat / STEP))
@@ -55,19 +169,19 @@ def compute_fire_analysis(
             ("lon_idx", "<=", max_lon_idx),
         ]
 
-    start_dt = pd.Timestamp(f"{year_from}-01-01")
-    end_dt = pd.Timestamp(f"{year_to}-12-31")
-    full_idx = pd.date_range(start_dt, end_dt, freq="D")
-    daily_series: Optional[pd.Series] = None
-
-    if cdir and parquet_path and parquet_path.exists():
         try:
-            table = pq.read_table(parquet_path, filters=filters, columns=["date", "value"])
+            table = pq.read_table(
+                parquet_path, filters=filters, columns=["date", "value"]
+            )
             df = table.to_pandas()
+            del table
             if not df.empty and df["value"].sum() > 0:
+                df["value"] = df["value"].astype(np.float32)
                 df["date"] = pd.to_datetime(df["date"])
-                daily_grouped = df.groupby("date")["value"].sum()
+                daily_grouped = df.groupby("date")["value"].sum().astype(np.float32)
                 daily_series = daily_grouped.reindex(full_idx, fill_value=0.0)
+            del df
+            gc.collect()
         except Exception:
             daily_series = None
 

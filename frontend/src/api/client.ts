@@ -102,10 +102,16 @@ export async function fetchBackendAnalysis(
   selectedDay = 258,
   signal?: AbortSignal,
 ): Promise<DashboardData> {
-  // Quantize bounds slightly to maximize cache hits
-  const q = (n: number) => Number(n.toFixed(2))
+  // Quantize bounds to 1 decimal place so near-identical pans hit the same cache entry
+  const q = (n: number) => Number(n.toFixed(1))
   const bboxStr = `${q(bounds.west)},${q(bounds.south)},${q(bounds.east)},${q(bounds.north)}`
   const cacheKey = `${countryIso}:${bboxStr}`
+
+  // Check frontend memory cache first
+  const cached = analysisCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
 
   const params = new URLSearchParams({
     country: countryIso,
