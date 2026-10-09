@@ -173,6 +173,7 @@ export default function App() {
             rows={visibleRows}
             selectedYear={year}
             onSelectYear={handleYearSelect}
+            onHorizon={setHorizon}
           />
         </aside>
         <div
